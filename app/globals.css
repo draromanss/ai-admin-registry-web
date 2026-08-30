@@ -1,0 +1,113 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "../vendor/shadcn-tailwind-4.13.0.css";
+
+@utility scrollbar-thin {
+  scrollbar-width: thin;
+}
+
+@utility scrollbar-none {
+  scrollbar-width: none;
+  &::-webkit-scrollbar { display: none; }
+}
+
+:root {
+  --background: #071017;
+  --foreground: #eef7f4;
+  --card: #0e1921;
+  --card-foreground: #eef7f4;
+  --popover: #0e1921;
+  --popover-foreground: #eef7f4;
+  --primary: #7af2c9;
+  --primary-foreground: #071017;
+  --secondary: #16232b;
+  --secondary-foreground: #eef7f4;
+  --muted: #142129;
+  --muted-foreground: #7f918e;
+  --accent: #17262e;
+  --accent-foreground: #eef7f4;
+  --destructive: #ef6758;
+  --border: rgba(255, 255, 255, 0.08);
+  --input: rgba(255, 255, 255, 0.12);
+  --ring: #56e7b8;
+  --radius: 0.875rem;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --font-sans: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+}
+
+* { box-sizing: border-box; }
+
+html {
+  background: #071017;
+  color-scheme: dark;
+  -webkit-tap-highlight-color: transparent;
+}
+
+body {
+  margin: 0;
+  background: #071017;
+  color: #eef7f4;
+  font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  text-rendering: optimizeLegibility;
+}
+
+button { cursor: pointer; }
+
+.security-grid {
+  background-image:
+    linear-gradient(rgba(91, 142, 129, 0.035) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(91, 142, 129, 0.035) 1px, transparent 1px),
+    radial-gradient(circle at 50% -5%, rgba(86, 231, 184, 0.12), transparent 34%);
+  background-size: 34px 34px, 34px 34px, 100% 100%;
+}
+
+.metric-card {
+  min-width: 0;
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.027);
+  padding: 14px;
+}
+
+::selection {
+  background: rgba(122, 242, 201, 0.24);
+  color: #ffffff;
+}
+
+@media (min-width: 700px) {
+  body { background: #04090d; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
