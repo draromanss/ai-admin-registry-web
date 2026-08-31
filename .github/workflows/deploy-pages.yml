@@ -20,7 +20,7 @@ jobs:
     env:
       GITHUB_PAGES: "true"
       NEXT_PUBLIC_BASE_PATH: /ai-admin-registry-web
-      NEXT_PUBLIC_API_BASE_URL: ${{ vars.NEXT_PUBLIC_API_BASE_URL }}
+      NEXT_PUBLIC_API_BASE_URL: https://ai-admin-registry-leader1one.waw0.amvera.tech
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
