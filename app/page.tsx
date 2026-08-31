@@ -38,7 +38,6 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog"
 import { Button } from "@/components/ui/button"
-import { Switch } from "@/components/ui/switch"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Toaster } from "@/components/ui/sonner"
 
@@ -48,6 +47,14 @@ type Permission = {
   detail: string
   enabled: boolean
   approval?: boolean
+}
+
+type PermissionMode = "allow" | "deny" | "approval"
+
+type AgentCredential = {
+  agentId: string
+  agentName: string
+  agentKey: string
 }
 
 type TelegramUser = {
@@ -116,6 +123,17 @@ type RegistryAuditEvent = {
 
 const apiBaseUrl = (process.env.NEXT_PUBLIC_API_BASE_URL ?? "").replace(/\/$/, "")
 
+const permissionCatalog = ["read", "draft", "send", "publish", "accounts", "payments"] as const
+
+const defaultPermissionModes = (): Record<string, PermissionMode> => ({
+  read: "allow",
+  draft: "allow",
+  send: "approval",
+  publish: "approval",
+  accounts: "deny",
+  payments: "deny",
+})
+
 type Language = "ru" | "en"
 
 const permissionCopy: Record<Language, Record<string, { label: string; detail: string }>> = {
@@ -157,6 +175,8 @@ const translations = {
     statusRejected: "Реестр отклонил изменение статуса", agentPaused: "Агент приостановлен", agentRestored: "Работа агента возобновлена", mandatesRevoked: "Все ожидающие мандаты отозваны.", policyActive: "Политика разрешений снова активна.", statusNotChanged: "Статус агента не изменён",
     decisionRejected: "Реестр отклонил решение", mandateIssued: "Разовый мандат выпущен", requestRejected: "Запрос отклонён", mandateExpires: "Подписанный мандат действует 10 минут.", agentCannotAct: "Агент не сможет выполнить это действие.", decisionNotRecorded: "Решение не записано",
     registryNotConnected: "Реестр не подключён", agentName: "Название агента", model: "Модель", creationRejected: "Реестр отклонил создание агента", copyAgentKey: "API-ключ агента — скопируйте его сейчас. Повторно он показан не будет.", agentCreated: "Агент создан", agentNotCreated: "Агент не создан", customPermission: "Пользовательская граница полномочий", togglePermission: "Изменить разрешение",
+    createAgentTitle: "Новый ИИ-агент", createAgentDescription: "Укажите имя, модель и стартовые границы полномочий.", agentNamePlaceholder: "Например, Client Hunter", modelPlaceholder: "Например, GPT-5.6", permissionsTitle: "Стартовые разрешения", allow: "Разрешить", approvalMode: "После подтверждения", deny: "Запретить", createAgent: "Создать агента", creatingAgent: "Создание…", close: "Закрыть",
+    credentialsTitle: "Сохраните ключ агента", credentialsDescription: "Ключ показан только один раз. После закрытия этого окна восстановить его нельзя — можно только выпустить новый.", apiAddress: "Адрес API", agentId: "ID агента", agentKey: "Секретный API-ключ", copy: "Копировать", copied: "Скопировано", keepSecret: "Храните ключ только в секретах среды агента. Не вставляйте его в сайт, сообщения или публичный репозиторий.", integrationTitle: "Первый запрос агента", envHint: "Сохраните ключ в переменной AI_ADMIN_AGENT_KEY и выполните тестовый запрос:", keySaved: "Я сохранил ключ", rotateKey: "Выпустить новый ключ", rotateQuestion: "Выпустить новый ключ для", rotateDescription: "Предыдущий ключ сразу перестанет работать. Все интеграции агента потребуется обновить.", rotate: "Выпустить", keyRotated: "Новый ключ выпущен", keyRotationFailed: "Не удалось выпустить новый ключ", invalidAgentName: "Название должно содержать не менее двух символов.",
   },
   en: {
     connecting: "Connecting…", personalRegistry: "Personal Registry", telegramAdministrator: "Telegram administrator",
@@ -177,6 +197,8 @@ const translations = {
     statusRejected: "Status update was rejected", agentPaused: "Agent paused", agentRestored: "Agent restored", mandatesRevoked: "All pending mandates were revoked.", policyActive: "Permission policy is active again.", statusNotChanged: "Agent status was not changed",
     decisionRejected: "The decision was rejected by the registry", mandateIssued: "One-time mandate issued", requestRejected: "Request rejected", mandateExpires: "The signed mandate expires in 10 minutes.", agentCannotAct: "The agent cannot perform this action.", decisionNotRecorded: "Decision was not recorded",
     registryNotConnected: "Registry is not connected", agentName: "Agent name", model: "Model", creationRejected: "Agent creation was rejected", copyAgentKey: "Agent API key — copy it now. It will not be shown again.", agentCreated: "Agent created", agentNotCreated: "Agent was not created", customPermission: "Custom permission boundary", togglePermission: "Toggle permission",
+    createAgentTitle: "New AI agent", createAgentDescription: "Set a name, model and initial permission boundary.", agentNamePlaceholder: "For example, Client Hunter", modelPlaceholder: "For example, GPT-5.6", permissionsTitle: "Initial permissions", allow: "Allow", approvalMode: "Require approval", deny: "Deny", createAgent: "Create agent", creatingAgent: "Creating…", close: "Close",
+    credentialsTitle: "Save the agent key", credentialsDescription: "This key is shown only once. After closing this window it cannot be recovered; only replaced.", apiAddress: "API address", agentId: "Agent ID", agentKey: "Secret API key", copy: "Copy", copied: "Copied", keepSecret: "Store the key only in the agent runtime secrets. Never put it in a website, message or public repository.", integrationTitle: "First agent request", envHint: "Store the key as AI_ADMIN_AGENT_KEY and run this test request:", keySaved: "I saved the key", rotateKey: "Issue a new key", rotateQuestion: "Issue a new key for", rotateDescription: "The previous key will stop working immediately. Every agent integration must be updated.", rotate: "Issue key", keyRotated: "New key issued", keyRotationFailed: "Unable to issue a new key", invalidAgentName: "The name must contain at least two characters.",
   },
 } as const
 
@@ -184,6 +206,7 @@ const auditEventNames: Record<Language, Record<string, string>> = {
   ru: {
     "administrator.registered": "Администратор зарегистрирован",
     "agent.created": "Агент создан",
+    "agent.key_rotated": "Ключ агента заменён",
     "agent.active": "Работа агента возобновлена",
     "agent.paused": "Агент приостановлен",
     "permission.changed": "Разрешение изменено",
@@ -194,6 +217,7 @@ const auditEventNames: Record<Language, Record<string, string>> = {
   en: {
     "administrator.registered": "Administrator registered",
     "agent.created": "Agent created",
+    "agent.key_rotated": "Agent key rotated",
     "agent.active": "Agent restored",
     "agent.paused": "Agent paused",
     "permission.changed": "Permission changed",
@@ -219,6 +243,11 @@ function mapRegistryAgent(agent: RegistryAgent, language: Language): Agent {
       approval: permission.mode === "approval",
     })),
   }
+}
+
+function getPermissionMode(permission: Permission | undefined): PermissionMode {
+  if (!permission || !permission.enabled) return "deny"
+  return permission.approval ? "approval" : "allow"
 }
 
 function MiniMark() {
@@ -251,6 +280,12 @@ export default function Home() {
   const [sessionToken, setSessionToken] = useState<string | null>(null)
   const [administratorId, setAdministratorId] = useState<string>(translations.ru.connecting)
   const [organizationName, setOrganizationName] = useState<string>(translations.ru.personalRegistry)
+  const [agentFormOpen, setAgentFormOpen] = useState(false)
+  const [agentName, setAgentName] = useState("")
+  const [agentModel, setAgentModel] = useState("unspecified")
+  const [agentPermissionModes, setAgentPermissionModes] = useState<Record<string, PermissionMode>>(defaultPermissionModes)
+  const [isCreatingAgent, setIsCreatingAgent] = useState(false)
+  const [credential, setCredential] = useState<AgentCredential | null>(null)
   const tr = translations[language]
 
   const selectedAgent = useMemo(
@@ -271,6 +306,10 @@ export default function Home() {
   const telegramIdentity = telegramUser?.username
     ? `@${telegramUser.username}`
     : "@AIAdminRegistryBot"
+  const curlExample = `curl -X POST '${apiBaseUrl}/api/agent/action-requests' \\
+  -H 'Content-Type: application/json' \\
+  -H 'X-Agent-Key: $AI_ADMIN_AGENT_KEY' \\
+  -d '{"action":"send","scope":{"contacts":1},"risk_score":0.2}'`
 
   useEffect(() => {
     const telegram = (window as typeof window & {
@@ -360,6 +399,51 @@ export default function Home() {
     return () => abortController.abort()
   }, [])
 
+  useEffect(() => {
+    if (!sessionToken || !apiBaseUrl) return
+
+    let stopped = false
+    const refreshRegistry = async () => {
+      if (document.visibilityState === "hidden") return
+      try {
+        const authorization = { Authorization: `Bearer ${sessionToken}` }
+        const [agentsResponse, requestsResponse, auditResponse] = await Promise.all([
+          fetch(`${apiBaseUrl}/api/agents`, { headers: authorization }),
+          fetch(`${apiBaseUrl}/api/action-requests?status=pending`, { headers: authorization }),
+          fetch(`${apiBaseUrl}/api/audit?limit=100`, { headers: authorization }),
+        ])
+        if (stopped) return
+        if (agentsResponse.ok) {
+          const registry = await agentsResponse.json() as { agents: RegistryAgent[] }
+          const liveAgents = registry.agents.map((agent) => mapRegistryAgent(agent, language))
+          setAgents(liveAgents)
+          setSelectedAgentId((current) => liveAgents.some((agent) => agent.id === current) ? current : liveAgents[0]?.id ?? "")
+        }
+        if (requestsResponse.ok) {
+          const registry = await requestsResponse.json() as { requests: RegistryActionRequest[] }
+          setPendingRequests(registry.requests)
+        }
+        if (auditResponse.ok) {
+          const registry = await auditResponse.json() as { events: RegistryAuditEvent[] }
+          setAuditEvents(registry.events)
+        }
+      } catch {
+        // A transient refresh failure must not interrupt the administrator's work.
+      }
+    }
+
+    const timer = window.setInterval(() => void refreshRegistry(), 10_000)
+    const refreshWhenVisible = () => {
+      if (document.visibilityState === "visible") void refreshRegistry()
+    }
+    document.addEventListener("visibilitychange", refreshWhenVisible)
+    return () => {
+      stopped = true
+      window.clearInterval(timer)
+      document.removeEventListener("visibilitychange", refreshWhenVisible)
+    }
+  }, [sessionToken, language])
+
   const changeLanguage = (nextLanguage: Language) => {
     setLanguage(nextLanguage)
     document.documentElement.lang = nextLanguage
@@ -377,17 +461,28 @@ export default function Home() {
     })))
   }
 
-  const togglePermission = async (permissionId: string, enabled: boolean) => {
+  const updatePermissionMode = async (permissionId: string, mode: PermissionMode) => {
     if (!selectedAgent) return
     const previousAgents = agents
     setAgents((current) => current.map((agent) => (
       agent.id === selectedAgent.id
-        ? { ...agent, permissions: agent.permissions.map((permission) => permission.id === permissionId ? { ...permission, enabled } : permission) }
+        ? {
+          ...agent,
+          permissions: [
+            ...agent.permissions.filter((permission) => permission.id !== permissionId),
+            {
+              id: permissionId,
+              label: permissionCopy[language][permissionId]?.label ?? permissionId,
+              detail: permissionCopy[language][permissionId]?.detail ?? tr.customPermission,
+              enabled: mode !== "deny",
+              approval: mode === "approval",
+            },
+          ],
+        }
         : agent
     )))
     try {
       if (sessionToken && apiBaseUrl) {
-        const currentPermission = selectedAgent.permissions.find((permission) => permission.id === permissionId)
         const response = await fetch(`${apiBaseUrl}/api/agents/${selectedAgent.id}/permissions/${permissionId}`, {
           method: "PUT",
           headers: {
@@ -395,13 +490,13 @@ export default function Home() {
             "Content-Type": "application/json",
           },
           body: JSON.stringify({
-            mode: enabled ? (currentPermission?.approval ? "approval" : "allow") : "deny",
+            mode,
             scope: {},
           }),
         })
         if (!response.ok) throw new Error(tr.permissionRejected)
       }
-      toast.success(enabled ? tr.permissionEnabled : tr.permissionRevoked, {
+      toast.success(mode === "deny" ? tr.permissionRevoked : tr.permissionEnabled, {
         description: `${selectedAgent.name} · ${permissionId}`,
       })
     } catch (error) {
@@ -468,14 +563,25 @@ export default function Home() {
     }
   }
 
+  const openAgentForm = () => {
+    setAgentName("")
+    setAgentModel("unspecified")
+    setAgentPermissionModes(defaultPermissionModes())
+    setAgentFormOpen(true)
+  }
+
   const addAgent = async () => {
     if (!sessionToken || !apiBaseUrl) {
       toast.error(tr.registryNotConnected)
       return
     }
-    const name = window.prompt(tr.agentName)?.trim()
-    if (!name) return
-    const model = window.prompt(tr.model, "unspecified")?.trim() || "unspecified"
+    const name = agentName.trim()
+    if (name.length < 2) {
+      toast.error(tr.invalidAgentName)
+      return
+    }
+    const model = agentModel.trim() || "unspecified"
+    setIsCreatingAgent(true)
     try {
       const response = await fetch(`${apiBaseUrl}/api/agents`, {
         method: "POST",
@@ -483,17 +589,46 @@ export default function Home() {
           Authorization: `Bearer ${sessionToken}`,
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ name, model }),
+        body: JSON.stringify({
+          name,
+          model,
+          permissions: permissionCatalog.map((permissionKey) => ({
+            permission_key: permissionKey,
+            mode: agentPermissionModes[permissionKey],
+            scope: {},
+          })),
+        }),
       })
       if (!response.ok) throw new Error(tr.creationRejected)
       const created = await response.json() as { agent: RegistryAgent; agent_key: string }
       const liveAgent = mapRegistryAgent(created.agent, language)
       setAgents((current) => [liveAgent, ...current])
       setSelectedAgentId(liveAgent.id)
-      window.prompt(tr.copyAgentKey, created.agent_key)
+      setAgentFormOpen(false)
+      setCredential({ agentId: liveAgent.id, agentName: liveAgent.name, agentKey: created.agent_key })
       toast.success(tr.agentCreated, { description: liveAgent.id })
     } catch (error) {
       toast.error(tr.agentNotCreated, {
+        description: error instanceof Error ? error.message : tr.tryAgain,
+      })
+    } finally {
+      setIsCreatingAgent(false)
+    }
+  }
+
+  const rotateAgentKey = async () => {
+    if (!selectedAgent || !sessionToken || !apiBaseUrl) return
+    try {
+      const response = await fetch(`${apiBaseUrl}/api/agents/${selectedAgent.id}/rotate-key`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${sessionToken}` },
+      })
+      if (!response.ok) throw new Error(tr.keyRotationFailed)
+      const result = await response.json() as { agent_key: string }
+      setCredential({ agentId: selectedAgent.id, agentName: selectedAgent.name, agentKey: result.agent_key })
+      toast.success(tr.keyRotated, { description: selectedAgent.id })
+    } catch (error) {
+      toast.error(tr.keyRotationFailed, {
         description: error instanceof Error ? error.message : tr.tryAgain,
       })
     }
@@ -590,7 +725,7 @@ export default function Home() {
               )}
 
               <section>
-                <div className="mb-3 flex items-center justify-between"><h2 className="text-sm font-semibold">{tr.yourAgents}</h2><button onClick={addAgent} className="flex items-center gap-1 text-xs font-semibold text-[#7af2c9]"><Plus className="size-3.5" /> {tr.addAgent}</button></div>
+                <div className="mb-3 flex items-center justify-between"><h2 className="text-sm font-semibold">{tr.yourAgents}</h2><button onClick={openAgentForm} className="flex items-center gap-1 text-xs font-semibold text-[#7af2c9]"><Plus className="size-3.5" /> {tr.addAgent}</button></div>
                 <div className="space-y-2.5">
                   {agents.map((agent) => (
                     <button key={agent.id} onClick={() => { setSelectedAgentId(agent.id); setTab("agents") }} className="group flex w-full items-center gap-3 rounded-[20px] border border-white/[0.07] bg-white/[0.027] p-3.5 text-left transition hover:border-white/[0.12] hover:bg-white/[0.045]">
@@ -622,14 +757,31 @@ export default function Home() {
               <section>
                 <div className="mb-3 flex items-end justify-between"><div><h2 className="text-sm font-semibold">{tr.permissionBoundary}</h2><p className="mt-1 text-xs text-[#718481]">{tr.everyChangeAudited}</p></div><LockKeyhole className="size-4 text-[#7af2c9]" /></div>
                 <div className="overflow-hidden rounded-[24px] border border-white/[0.07] bg-white/[0.027]">
-                  {selectedAgent.permissions.map((permission, index) => (
-                    <div key={permission.id} className={`flex items-center gap-3 p-4 ${index !== 0 ? "border-t border-white/[0.06]" : ""}`}>
-                      <div className="min-w-0 flex-1"><div className="flex items-center gap-2"><p className="text-sm font-medium">{permission.label}</p>{permission.approval && <span className="rounded-md bg-[#ffae70]/10 px-1.5 py-0.5 text-[8px] font-bold uppercase tracking-[0.1em] text-[#ffb77d]">{tr.approval}</span>}</div><p className="mt-1 text-[11px] leading-4 text-[#718481]">{permission.detail}</p></div>
-                      <Switch checked={permission.enabled} onCheckedChange={(value) => togglePermission(permission.id, value)} aria-label={`${tr.togglePermission}: ${permission.label}`} className="data-[state=checked]:bg-[#56e7b8]" />
-                    </div>
-                  ))}
+                  {permissionCatalog.map((permissionId, index) => {
+                    const permission = selectedAgent.permissions.find((item) => item.id === permissionId)
+                    const copy = permissionCopy[language][permissionId]
+                    const mode = getPermissionMode(permission)
+                    return (
+                      <div key={permissionId} className={`flex items-center gap-3 p-4 ${index !== 0 ? "border-t border-white/[0.06]" : ""}`}>
+                        <div className="min-w-0 flex-1"><p className="text-sm font-medium">{copy.label}</p><p className="mt-1 text-[11px] leading-4 text-[#718481]">{copy.detail}</p></div>
+                        <select value={mode} onChange={(event) => void updatePermissionMode(permissionId, event.target.value as PermissionMode)} aria-label={`${tr.togglePermission}: ${copy.label}`} className={`max-w-[138px] rounded-xl border px-2.5 py-2 text-[11px] font-semibold outline-none ${mode === "allow" ? "border-[#56e7b8]/20 bg-[#56e7b8]/10 text-[#7af2c9]" : mode === "approval" ? "border-[#ffae70]/20 bg-[#ffae70]/10 text-[#ffb77d]" : "border-white/10 bg-white/[0.035] text-[#8b9b98]"}`}>
+                          <option value="allow">{tr.allow}</option>
+                          <option value="approval">{tr.approvalMode}</option>
+                          <option value="deny">{tr.deny}</option>
+                        </select>
+                      </div>
+                    )
+                  })}
                 </div>
               </section>
+
+              <AlertDialog>
+                <AlertDialogTrigger asChild><Button variant="outline" className="h-12 w-full rounded-[16px] border-white/10 bg-white/[0.025] font-semibold text-[#b9c9c6] hover:bg-white/[0.06] hover:text-white"><KeyRound className="size-4" /> {tr.rotateKey}</Button></AlertDialogTrigger>
+                <AlertDialogContent className="border-white/10 bg-[#0d1820] text-[#eef7f4]">
+                  <AlertDialogHeader><AlertDialogMedia className="bg-[#56e7b8]/10 text-[#7af2c9]"><KeyRound /></AlertDialogMedia><AlertDialogTitle>{tr.rotateQuestion} {selectedAgent.name}?</AlertDialogTitle><AlertDialogDescription className="text-[#849693]">{tr.rotateDescription}</AlertDialogDescription></AlertDialogHeader>
+                  <AlertDialogFooter><AlertDialogCancel className="border-white/10 bg-white/[0.03] text-white hover:bg-white/[0.07] hover:text-white">{tr.cancel}</AlertDialogCancel><AlertDialogAction onClick={() => void rotateAgentKey()} className="bg-[#7af2c9] text-[#071017] hover:bg-[#94f7d6]">{tr.rotate}</AlertDialogAction></AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
 
               {selectedAgent.status === "active" ? (
                 <AlertDialog>
@@ -696,6 +848,48 @@ export default function Home() {
           </nav>
         </Tabs>
       </div>
+      {agentFormOpen && (
+        <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/70 p-3 backdrop-blur-sm sm:items-center" role="dialog" aria-modal="true" aria-labelledby="create-agent-title">
+          <div className="max-h-[92dvh] w-full max-w-[480px] overflow-y-auto rounded-[26px] border border-white/10 bg-[#0d1820] p-5 shadow-2xl">
+            <div className="flex items-start justify-between gap-4">
+              <div><h2 id="create-agent-title" className="text-xl font-semibold">{tr.createAgentTitle}</h2><p className="mt-1 text-sm leading-5 text-[#849693]">{tr.createAgentDescription}</p></div>
+              <button onClick={() => setAgentFormOpen(false)} aria-label={tr.close} className="flex size-9 shrink-0 items-center justify-center rounded-full border border-white/10 bg-white/[0.03] text-[#91a29f]"><X className="size-4" /></button>
+            </div>
+            <div className="mt-5 space-y-4">
+              <label className="block"><span className="mb-2 block text-xs font-semibold text-[#aebfbb]">{tr.agentName}</span><input autoFocus value={agentName} onChange={(event) => setAgentName(event.target.value)} placeholder={tr.agentNamePlaceholder} className="h-12 w-full rounded-xl border border-white/10 bg-white/[0.035] px-4 text-sm outline-none placeholder:text-[#50615e] focus:border-[#56e7b8]/40" /></label>
+              <label className="block"><span className="mb-2 block text-xs font-semibold text-[#aebfbb]">{tr.model}</span><input value={agentModel} onChange={(event) => setAgentModel(event.target.value)} placeholder={tr.modelPlaceholder} className="h-12 w-full rounded-xl border border-white/10 bg-white/[0.035] px-4 text-sm outline-none placeholder:text-[#50615e] focus:border-[#56e7b8]/40" /></label>
+              <div><p className="mb-2 text-xs font-semibold text-[#aebfbb]">{tr.permissionsTitle}</p><div className="overflow-hidden rounded-2xl border border-white/[0.07]">
+                {permissionCatalog.map((permissionId, index) => (
+                  <div key={permissionId} className={`flex items-center gap-3 bg-white/[0.02] p-3 ${index ? "border-t border-white/[0.06]" : ""}`}>
+                    <div className="min-w-0 flex-1"><p className="text-sm font-medium">{permissionCopy[language][permissionId].label}</p><p className="mt-0.5 text-[10px] leading-4 text-[#718481]">{permissionCopy[language][permissionId].detail}</p></div>
+                    <select value={agentPermissionModes[permissionId]} onChange={(event) => setAgentPermissionModes((current) => ({ ...current, [permissionId]: event.target.value as PermissionMode }))} className="max-w-[138px] rounded-xl border border-white/10 bg-[#111e26] px-2 py-2 text-[11px] font-semibold text-[#c5d4d1] outline-none">
+                      <option value="allow">{tr.allow}</option><option value="approval">{tr.approvalMode}</option><option value="deny">{tr.deny}</option>
+                    </select>
+                  </div>
+                ))}
+              </div></div>
+              <Button onClick={() => void addAgent()} disabled={isCreatingAgent} className="h-12 w-full rounded-[16px] bg-[#7af2c9] font-bold text-[#071017] hover:bg-[#94f7d6] disabled:opacity-60"><Plus className="size-4" /> {isCreatingAgent ? tr.creatingAgent : tr.createAgent}</Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {credential && (
+        <div className="fixed inset-0 z-[60] flex items-end justify-center bg-black/80 p-3 backdrop-blur-sm sm:items-center" role="dialog" aria-modal="true" aria-labelledby="credential-title">
+          <div className="max-h-[94dvh] w-full max-w-[480px] overflow-y-auto rounded-[26px] border border-[#56e7b8]/20 bg-[#0d1820] p-5 shadow-2xl">
+            <div className="flex size-11 items-center justify-center rounded-[15px] bg-[#56e7b8]/10 text-[#7af2c9]"><KeyRound className="size-5" /></div>
+            <h2 id="credential-title" className="mt-4 text-xl font-semibold">{tr.credentialsTitle}</h2><p className="mt-2 text-sm leading-6 text-[#849693]">{tr.credentialsDescription}</p>
+            <div className="mt-5 space-y-3">
+              {[[tr.apiAddress, apiBaseUrl], [tr.agentId, credential.agentId], [tr.agentKey, credential.agentKey]].map(([label, value]) => (
+                <div key={label} className="rounded-2xl border border-white/[0.08] bg-white/[0.025] p-3"><p className="text-[10px] font-semibold uppercase tracking-[0.13em] text-[#718481]">{label}</p><div className="mt-2 flex items-center gap-2"><code className="min-w-0 flex-1 break-all text-xs text-[#dbe8e5]">{value}</code><button onClick={() => { void navigator.clipboard?.writeText(value); toast.success(tr.copied) }} aria-label={`${tr.copy}: ${label}`} className="flex size-9 shrink-0 items-center justify-center rounded-xl border border-white/10 bg-white/[0.04] text-[#9dafac]"><Copy className="size-4" /></button></div></div>
+              ))}
+            </div>
+            <div className="mt-4 rounded-2xl border border-[#ffae70]/20 bg-[#ffae70]/[0.07] p-3 text-xs leading-5 text-[#ffc28e]"><ShieldAlert className="mr-2 inline size-4" />{tr.keepSecret}</div>
+            <div className="mt-5"><h3 className="text-sm font-semibold">{tr.integrationTitle}</h3><p className="mt-1 text-xs leading-5 text-[#849693]">{tr.envHint}</p><pre className="mt-3 overflow-x-auto rounded-2xl border border-white/[0.08] bg-[#071017] p-3 text-[10px] leading-5 text-[#9fd8c5]">{curlExample}</pre></div>
+            <Button onClick={() => setCredential(null)} className="mt-5 h-12 w-full rounded-[16px] bg-[#7af2c9] font-bold text-[#071017] hover:bg-[#94f7d6]"><Check className="size-4" /> {tr.keySaved}</Button>
+          </div>
+        </div>
+      )}
       <Toaster position="top-center" />
     </main>
   )
