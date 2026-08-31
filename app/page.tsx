@@ -96,6 +96,24 @@ type RegistryAgent = {
   permissions?: RegistryPermission[]
 }
 
+type RegistryActionRequest = {
+  request_id: string
+  agent_id: string
+  action: string
+  requested_scope: Record<string, unknown>
+  risk_score?: number
+  status: "pending" | "approved" | "rejected" | "expired"
+  requested_at: string
+}
+
+type RegistryAuditEvent = {
+  event_id: string
+  agent_id?: string
+  event_type: string
+  event_data: Record<string, unknown>
+  created_at: string
+}
+
 const apiBaseUrl = (process.env.NEXT_PUBLIC_API_BASE_URL ?? "").replace(/\/$/, "")
 
 const permissionCopy: Record<string, { label: string; detail: string }> = {
@@ -125,38 +143,6 @@ function mapRegistryAgent(agent: RegistryAgent): Agent {
   }
 }
 
-const initialAgents: Agent[] = [
-  {
-    id: "AGT-1042",
-    name: "Client Hunter",
-    organization: "RST Agency",
-    model: "GPT-5.6",
-    status: "active",
-    activity: "2 min ago",
-    permissions: [
-      { id: "read", label: "Read public data", detail: "Search and analyze public sources", enabled: true },
-      { id: "draft", label: "Create drafts", detail: "Prepare messages without sending", enabled: true },
-      { id: "send", label: "External messages", detail: "Requires approval for every batch", enabled: true, approval: true },
-      { id: "accounts", label: "Create identities", detail: "Accounts, profiles and credentials", enabled: false },
-      { id: "payments", label: "Payments", detail: "Any transfer of funds", enabled: false },
-    ],
-  },
-  {
-    id: "AGT-2198",
-    name: "Content Operator",
-    organization: "AD SPELL",
-    model: "GPT-5.5",
-    status: "active",
-    activity: "18 min ago",
-    permissions: [
-      { id: "read", label: "Read workspace", detail: "Access approved brand materials", enabled: true },
-      { id: "draft", label: "Create drafts", detail: "Generate post and creative drafts", enabled: true },
-      { id: "publish", label: "Publish content", detail: "Requires administrator approval", enabled: true, approval: true },
-      { id: "payments", label: "Payments", detail: "Any transfer of funds", enabled: false },
-    ],
-  },
-]
-
 function MiniMark() {
   return (
     <div className="relative flex size-10 items-center justify-center overflow-hidden rounded-[14px] border border-white/10 bg-[#111c25] shadow-[0_0_30px_rgba(86,231,184,0.08)]">
@@ -177,24 +163,25 @@ function StatusPill({ status }: { status: "active" | "paused" }) {
 }
 
 export default function Home() {
-  const [agents, setAgents] = useState(initialAgents)
-  const [selectedAgentId, setSelectedAgentId] = useState(initialAgents[0].id)
-  const [approvalState, setApprovalState] = useState<"pending" | "approved" | "rejected">("pending")
+  const [agents, setAgents] = useState<Agent[]>([])
+  const [selectedAgentId, setSelectedAgentId] = useState("")
+  const [pendingRequests, setPendingRequests] = useState<RegistryActionRequest[]>([])
+  const [auditEvents, setAuditEvents] = useState<RegistryAuditEvent[]>([])
   const [tab, setTab] = useState("overview")
   const [telegramUser, setTelegramUser] = useState<TelegramUser | null>(null)
   const [sessionToken, setSessionToken] = useState<string | null>(null)
-  const [administratorId, setAdministratorId] = useState("ADM-DEMO")
+  const [administratorId, setAdministratorId] = useState("Connecting…")
   const [organizationName, setOrganizationName] = useState("Personal Registry")
 
   const selectedAgent = useMemo(
-    () => agents.find((agent) => agent.id === selectedAgentId) ?? agents[0] ?? initialAgents[0],
+    () => agents.find((agent) => agent.id === selectedAgentId) ?? agents[0] ?? null,
     [agents, selectedAgentId]
   )
 
   const activeCount = agents.filter((agent) => agent.status === "active").length
   const administratorName = telegramUser
     ? [telegramUser.first_name, telegramUser.last_name].filter(Boolean).join(" ")
-    : "Roman Stepanov"
+    : "Telegram administrator"
   const administratorInitials = administratorName
     .split(" ")
     .map((part) => part[0])
@@ -251,9 +238,11 @@ export default function Home() {
         setAdministratorId(authentication.administrator.administrator_id)
 
         const authorization = { Authorization: `Bearer ${authentication.session_token}` }
-        const [profileResponse, agentsResponse] = await Promise.all([
+        const [profileResponse, agentsResponse, requestsResponse, auditResponse] = await Promise.all([
           fetch(`${apiBaseUrl}/api/me`, { headers: authorization, signal: abortController.signal }),
           fetch(`${apiBaseUrl}/api/agents`, { headers: authorization, signal: abortController.signal }),
+          fetch(`${apiBaseUrl}/api/action-requests?status=pending`, { headers: authorization, signal: abortController.signal }),
+          fetch(`${apiBaseUrl}/api/audit?limit=100`, { headers: authorization, signal: abortController.signal }),
         ])
         if (profileResponse.ok) {
           const profile = await profileResponse.json() as {
@@ -263,13 +252,17 @@ export default function Home() {
         }
         if (agentsResponse.ok) {
           const registry = await agentsResponse.json() as { agents: RegistryAgent[] }
-          if (registry.agents.length > 0) {
-            const liveAgents = registry.agents.map(mapRegistryAgent)
-            setAgents(liveAgents)
-            setSelectedAgentId(liveAgents[0].id)
-          } else {
-            setAgents([])
-          }
+          const liveAgents = registry.agents.map(mapRegistryAgent)
+          setAgents(liveAgents)
+          setSelectedAgentId(liveAgents[0]?.id ?? "")
+        }
+        if (requestsResponse.ok) {
+          const registry = await requestsResponse.json() as { requests: RegistryActionRequest[] }
+          setPendingRequests(registry.requests)
+        }
+        if (auditResponse.ok) {
+          const registry = await auditResponse.json() as { events: RegistryAuditEvent[] }
+          setAuditEvents(registry.events)
         }
       } catch (error) {
         if (!abortController.signal.aborted) {
@@ -284,6 +277,7 @@ export default function Home() {
   }, [])
 
   const togglePermission = async (permissionId: string, enabled: boolean) => {
+    if (!selectedAgent) return
     const previousAgents = agents
     setAgents((current) => current.map((agent) => (
       agent.id === selectedAgent.id
@@ -318,6 +312,7 @@ export default function Home() {
   }
 
   const updateAgentStatus = async (nextStatus: "active" | "paused") => {
+    if (!selectedAgent) return
     const previousAgents = agents
     setAgents((current) => current.map((agent) => agent.id === selectedAgent.id ? { ...agent, status: nextStatus } : agent))
     try {
@@ -348,12 +343,59 @@ export default function Home() {
 
   const restoreAgent = () => void updateAgentStatus("active")
 
-  const resolveApproval = (decision: "approved" | "rejected") => {
-    setApprovalState(decision)
-    toast[decision === "approved" ? "success" : "error"](
-      decision === "approved" ? "One-time mandate issued" : "Request rejected",
-      { description: decision === "approved" ? "Signed token expires in 10 minutes." : "The agent cannot perform this action." }
-    )
+  const resolveApproval = async (requestId: string, decision: "approved" | "rejected") => {
+    if (!sessionToken || !apiBaseUrl) return
+    try {
+      const response = await fetch(`${apiBaseUrl}/api/action-requests/${requestId}/decision`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${sessionToken}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ decision }),
+      })
+      if (!response.ok) throw new Error("The decision was rejected by the registry")
+      setPendingRequests((current) => current.filter((request) => request.request_id !== requestId))
+      toast[decision === "approved" ? "success" : "error"](
+        decision === "approved" ? "One-time mandate issued" : "Request rejected",
+        { description: decision === "approved" ? "The signed mandate expires in 10 minutes." : "The agent cannot perform this action." }
+      )
+    } catch (error) {
+      toast.error("Decision was not recorded", {
+        description: error instanceof Error ? error.message : "Try again.",
+      })
+    }
+  }
+
+  const addAgent = async () => {
+    if (!sessionToken || !apiBaseUrl) {
+      toast.error("Registry is not connected")
+      return
+    }
+    const name = window.prompt("Agent name")?.trim()
+    if (!name) return
+    const model = window.prompt("Model", "unspecified")?.trim() || "unspecified"
+    try {
+      const response = await fetch(`${apiBaseUrl}/api/agents`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${sessionToken}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ name, model }),
+      })
+      if (!response.ok) throw new Error("Agent creation was rejected")
+      const created = await response.json() as { agent: RegistryAgent; agent_key: string }
+      const liveAgent = mapRegistryAgent(created.agent)
+      setAgents((current) => [liveAgent, ...current])
+      setSelectedAgentId(liveAgent.id)
+      window.prompt("Agent API key — copy it now. It will not be shown again.", created.agent_key)
+      toast.success("Agent created", { description: liveAgent.id })
+    } catch (error) {
+      toast.error("Agent was not created", {
+        description: error instanceof Error ? error.message : "Try again.",
+      })
+    }
   }
 
   return (
@@ -374,7 +416,7 @@ export default function Home() {
             </div>
             <button aria-label="Notifications" className="relative flex size-10 items-center justify-center rounded-full border border-white/[0.08] bg-white/[0.035] text-[#b9c9c6] transition hover:bg-white/[0.07]">
               <Bell className="size-[18px]" />
-              {approvalState === "pending" && <span className="absolute right-2 top-2 size-2 rounded-full border-2 border-[#0b151d] bg-[#ff8d69]" />}
+              {pendingRequests.length > 0 && <span className="absolute right-2 top-2 size-2 rounded-full border-2 border-[#0b151d] bg-[#ff8d69]" />}
             </button>
           </div>
         </header>
@@ -410,40 +452,39 @@ export default function Home() {
               <section className="grid grid-cols-3 gap-2.5">
                 <article className="metric-card"><Bot className="size-4 text-[#7af2c9]" /><p className="mt-3 text-2xl font-semibold">{agents.length}</p><p className="mt-1 text-[10px] uppercase tracking-[0.13em] text-[#718380]">Agents</p></article>
                 <article className="metric-card"><Activity className="size-4 text-[#7af2c9]" /><p className="mt-3 text-2xl font-semibold">{activeCount}</p><p className="mt-1 text-[10px] uppercase tracking-[0.13em] text-[#718380]">Active</p></article>
-                <article className="metric-card"><ShieldAlert className={`size-4 ${approvalState === "pending" ? "text-[#ffad6c]" : "text-[#7af2c9]"}`} /><p className="mt-3 text-2xl font-semibold">{approvalState === "pending" ? 1 : 0}</p><p className="mt-1 text-[10px] uppercase tracking-[0.13em] text-[#718380]">Pending</p></article>
+                <article className="metric-card"><ShieldAlert className={`size-4 ${pendingRequests.length > 0 ? "text-[#ffad6c]" : "text-[#7af2c9]"}`} /><p className="mt-3 text-2xl font-semibold">{pendingRequests.length}</p><p className="mt-1 text-[10px] uppercase tracking-[0.13em] text-[#718380]">Pending</p></article>
               </section>
 
-              {approvalState === "pending" ? (
+              {pendingRequests[0] ? (
                 <section className="overflow-hidden rounded-[24px] border border-[#ff9d66]/20 bg-[#ff9d66]/[0.055]">
                   <div className="flex items-start gap-3 border-b border-[#ff9d66]/15 px-5 py-4">
                     <div className="flex size-10 shrink-0 items-center justify-center rounded-[14px] bg-[#ff9d66]/10 text-[#ffad73]"><ShieldAlert className="size-5" /></div>
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center justify-between gap-3"><p className="text-[11px] font-bold uppercase tracking-[0.15em] text-[#ffb07a]">Approval required</p><span className="flex items-center gap-1 text-[10px] text-[#8b9b98]"><Clock3 className="size-3" /> now</span></div>
-                      <h2 className="mt-2 text-base font-semibold leading-snug">Send 274 external messages</h2>
-                      <p className="mt-1 text-xs text-[#8b9b98]">Client Hunter · AGT-1042</p>
+                      <h2 className="mt-2 text-base font-semibold leading-snug">{pendingRequests[0].action}</h2>
+                      <p className="mt-1 text-xs text-[#8b9b98]">{agents.find((agent) => agent.id === pendingRequests[0].agent_id)?.name ?? "AI agent"} · {pendingRequests[0].agent_id}</p>
                     </div>
                   </div>
                   <div className="space-y-3 px-5 py-4 text-xs">
-                    <div className="flex justify-between gap-4"><span className="text-[#778986]">Requested scope</span><span className="text-right text-[#dbe8e5]">274 contacts</span></div>
-                    <div className="flex justify-between gap-4"><span className="text-[#778986]">Current mandate</span><span className="text-right text-[#dbe8e5]">20 / day</span></div>
-                    <div className="flex justify-between gap-4"><span className="text-[#778986]">Risk signal</span><span className="text-right font-medium text-[#ffb07a]">13.7× over limit</span></div>
+                    <div className="flex justify-between gap-4"><span className="text-[#778986]">Requested scope</span><span className="max-w-[65%] break-words text-right text-[#dbe8e5]">{Object.keys(pendingRequests[0].requested_scope).length ? JSON.stringify(pendingRequests[0].requested_scope) : "No additional scope"}</span></div>
+                    <div className="flex justify-between gap-4"><span className="text-[#778986]">Risk score</span><span className="text-right font-medium text-[#ffb07a]">{pendingRequests[0].risk_score == null ? "Not supplied" : `${Math.round(pendingRequests[0].risk_score * 100)}%`}</span></div>
                   </div>
                   <div className="grid grid-cols-[1fr_1.4fr] gap-2.5 px-5 pb-5">
-                    <Button onClick={() => resolveApproval("rejected")} variant="outline" className="h-11 rounded-xl border-white/10 bg-white/[0.025] text-[#d7e4e1] hover:bg-white/[0.07] hover:text-white"><X className="size-4" /> Reject</Button>
-                    <Button onClick={() => resolveApproval("approved")} className="h-11 rounded-xl bg-[#7af2c9] font-bold text-[#071017] hover:bg-[#94f7d6]"><Check className="size-4" /> Approve once</Button>
+                    <Button onClick={() => resolveApproval(pendingRequests[0].request_id, "rejected")} variant="outline" className="h-11 rounded-xl border-white/10 bg-white/[0.025] text-[#d7e4e1] hover:bg-white/[0.07] hover:text-white"><X className="size-4" /> Reject</Button>
+                    <Button onClick={() => resolveApproval(pendingRequests[0].request_id, "approved")} className="h-11 rounded-xl bg-[#7af2c9] font-bold text-[#071017] hover:bg-[#94f7d6]"><Check className="size-4" /> Approve once</Button>
                   </div>
                 </section>
               ) : (
-                <section className={`rounded-[24px] border p-5 ${approvalState === "approved" ? "border-[#56e7b8]/20 bg-[#56e7b8]/[0.06]" : "border-white/[0.07] bg-white/[0.025]"}`}>
+                <section className="rounded-[24px] border border-[#56e7b8]/15 bg-[#56e7b8]/[0.045] p-5">
                   <div className="flex items-center gap-3">
-                    <div className={`flex size-10 items-center justify-center rounded-[14px] ${approvalState === "approved" ? "bg-[#56e7b8]/10 text-[#7af2c9]" : "bg-white/[0.05] text-[#99aaa7]"}`}>{approvalState === "approved" ? <KeyRound className="size-5" /> : <X className="size-5" />}</div>
-                    <div><p className="font-semibold">{approvalState === "approved" ? "One-time mandate issued" : "Action request rejected"}</p><p className="mt-1 text-xs text-[#7f918e]">Decision recorded in the audit trail</p></div>
+                    <div className="flex size-10 items-center justify-center rounded-[14px] bg-[#56e7b8]/10 text-[#7af2c9]"><ShieldCheck className="size-5" /></div>
+                    <div><p className="font-semibold">No pending approvals</p><p className="mt-1 text-xs text-[#7f918e]">New agent requests will appear here.</p></div>
                   </div>
                 </section>
               )}
 
               <section>
-                <div className="mb-3 flex items-center justify-between"><h2 className="text-sm font-semibold">Your AI agents</h2><button onClick={() => toast.info("Agent connection flow", { description: "SDK and API key setup will be connected next." })} className="flex items-center gap-1 text-xs font-semibold text-[#7af2c9]"><Plus className="size-3.5" /> Add agent</button></div>
+                <div className="mb-3 flex items-center justify-between"><h2 className="text-sm font-semibold">Your AI agents</h2><button onClick={addAgent} className="flex items-center gap-1 text-xs font-semibold text-[#7af2c9]"><Plus className="size-3.5" /> Add agent</button></div>
                 <div className="space-y-2.5">
                   {agents.map((agent) => (
                     <button key={agent.id} onClick={() => { setSelectedAgentId(agent.id); setTab("agents") }} className="group flex w-full items-center gap-3 rounded-[20px] border border-white/[0.07] bg-white/[0.027] p-3.5 text-left transition hover:border-white/[0.12] hover:bg-white/[0.045]">
@@ -452,11 +493,13 @@ export default function Home() {
                       <ChevronRight className="size-4 text-[#516360] transition group-hover:translate-x-0.5 group-hover:text-[#91a5a1]" />
                     </button>
                   ))}
+                  {agents.length === 0 && <div className="rounded-[20px] border border-dashed border-white/[0.1] px-4 py-7 text-center"><Bot className="mx-auto size-5 text-[#738582]" /><p className="mt-2 text-sm font-medium">No agents registered</p><p className="mt-1 text-xs text-[#718481]">Add the first agent to issue a private API key.</p></div>}
                 </div>
               </section>
             </TabsContent>
 
             <TabsContent value="agents" className="space-y-5">
+              {selectedAgent ? <>
               <div>
                 <p className="text-[10px] font-semibold uppercase tracking-[0.17em] text-[#718481]">Selected agent</p>
                 <div className="mt-3 flex items-center gap-3">
@@ -498,25 +541,22 @@ export default function Home() {
                 <p className="mb-3 text-[10px] font-semibold uppercase tracking-[0.16em] text-[#718481]">Switch agent</p>
                 <div className="flex gap-2 overflow-x-auto pb-1 scrollbar-none">{agents.map((agent) => <button key={agent.id} onClick={() => setSelectedAgentId(agent.id)} className={`shrink-0 rounded-xl border px-3 py-2 text-xs ${selectedAgent.id === agent.id ? "border-[#56e7b8]/30 bg-[#56e7b8]/10 text-[#7af2c9]" : "border-white/[0.07] bg-white/[0.025] text-[#8fa09d]"}`}>{agent.name}</button>)}</div>
               </section>
+              </> : <section className="rounded-[24px] border border-dashed border-white/[0.1] px-5 py-10 text-center"><Bot className="mx-auto size-6 text-[#738582]" /><h1 className="mt-3 text-lg font-semibold">No agents registered</h1><p className="mt-2 text-sm text-[#718481]">Create your first agent from the Home tab.</p><Button onClick={() => setTab("overview")} className="mt-5 bg-[#7af2c9] text-[#071017] hover:bg-[#94f7d6]">Back to Home</Button></section>}
             </TabsContent>
 
             <TabsContent value="audit" className="space-y-5">
               <div><p className="text-[10px] font-semibold uppercase tracking-[0.17em] text-[#718481]">Immutable record</p><h1 className="mt-2 text-2xl font-semibold">Audit trail</h1><p className="mt-2 text-sm leading-6 text-[#7f918e]">Every request, decision and permission change linked to a human administrator.</p></div>
               <div className="space-y-3">
-                {[
-                  { icon: KeyRound, title: approvalState === "approved" ? "Mandate approved" : approvalState === "rejected" ? "Request rejected" : "Approval requested", detail: "External messages · Client Hunter", time: "Now", color: approvalState === "pending" ? "amber" : "green" },
-                  { icon: LockKeyhole, title: "Permission policy verified", detail: "AGT-1042 · 5 permission rules", time: "2 min", color: "green" },
-                  { icon: UserRound, title: "Administrator authenticated", detail: `${administratorId} · ${telegramIdentity}`, time: "18 min", color: "green" },
-                  { icon: Building2, title: "Organization link confirmed", detail: `${organizationName} ↔ ${administratorId}`, time: "1 day", color: "neutral" },
-                ].map((event, index) => (
-                  <article key={event.title} className="relative flex gap-3 rounded-[20px] border border-white/[0.07] bg-white/[0.027] p-4">
-                    {index < 3 && <div className="absolute left-[33px] top-[52px] h-[28px] w-px bg-white/[0.08]" />}
-                    <div className={`flex size-9 shrink-0 items-center justify-center rounded-xl ${event.color === "green" ? "bg-[#56e7b8]/10 text-[#7af2c9]" : event.color === "amber" ? "bg-[#ffae70]/10 text-[#ffb77d]" : "bg-white/[0.05] text-[#90a19e]"}`}><event.icon className="size-4" /></div>
-                    <div className="min-w-0 flex-1"><p className="text-sm font-medium">{event.title}</p><p className="mt-1 text-[11px] text-[#718481]">{event.detail}</p></div><span className="text-[10px] text-[#596a67]">{event.time}</span>
+                {auditEvents.map((event, index) => (
+                  <article key={event.event_id} className="relative flex gap-3 rounded-[20px] border border-white/[0.07] bg-white/[0.027] p-4">
+                    {index < auditEvents.length - 1 && <div className="absolute left-[33px] top-[52px] h-[28px] w-px bg-white/[0.08]" />}
+                    <div className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-[#56e7b8]/10 text-[#7af2c9]"><ScrollText className="size-4" /></div>
+                    <div className="min-w-0 flex-1"><p className="text-sm font-medium capitalize">{event.event_type.replaceAll(".", " ")}</p><p className="mt-1 break-words text-[11px] text-[#718481]">{event.agent_id ? `${event.agent_id} · ` : ""}{Object.keys(event.event_data).length ? JSON.stringify(event.event_data) : administratorId}</p></div><span className="text-right text-[10px] text-[#596a67]">{new Date(event.created_at).toLocaleString()}</span>
                   </article>
                 ))}
+                {auditEvents.length === 0 && <div className="rounded-[20px] border border-dashed border-white/[0.1] px-4 py-7 text-center"><ScrollText className="mx-auto size-5 text-[#738582]" /><p className="mt-2 text-sm font-medium">No audit events yet</p></div>}
               </div>
-              <div className="rounded-[20px] border border-dashed border-white/[0.1] px-4 py-5 text-center"><ScrollText className="mx-auto size-5 text-[#738582]" /><p className="mt-2 text-xs text-[#718481]">Cryptographic event signatures connect in the backend stage.</p></div>
+              <div className="rounded-[20px] border border-dashed border-white/[0.1] px-4 py-5 text-center"><ScrollText className="mx-auto size-5 text-[#738582]" /><p className="mt-2 text-xs text-[#718481]">Loaded from the append-only backend audit log.</p></div>
             </TabsContent>
 
             <TabsContent value="profile" className="space-y-5">
