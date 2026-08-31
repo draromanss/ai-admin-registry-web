@@ -6,7 +6,7 @@ const basePath = process.env.NEXT_PUBLIC_BASE_PATH ?? ""
 
 export const metadata: Metadata = {
   title: "AI Admin Registry",
-  description: "A human accountability and authorization layer for autonomous AI agents.",
+  description: "Реестр человеческой ответственности и полномочий автономных ИИ-агентов.",
   icons: {
     icon: `${basePath}/favicon.svg`,
     shortcut: `${basePath}/favicon.svg`,
@@ -22,7 +22,7 @@ export const viewport: Viewport = {
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
-    <html lang="en">
+    <html lang="ru">
       <body className="antialiased">
         <Script src="https://telegram.org/js/telegram-web-app.js" strategy="beforeInteractive" />
         {children}
